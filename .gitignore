@@ -1,3 +1,7 @@
 init.sql
 init.sql.tmpl
-pit
+
+# Leading slash anchors these to the repo root, so the compiled binary is
+# ignored but the cmd/pit source directory is not.
+/pit
+/dist/
