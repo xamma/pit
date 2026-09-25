@@ -1,0 +1,73 @@
+name: Release
+
+# Releases are created pushing a semver tag:
+#   git tag -a v1.2.3 -m "v1.2.3" && git push origin v1.2.3
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to (re)build, e.g. v1.2.3'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: build & publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          fetch-depth: 0 # git describe needs the full history
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Resolve version
+        id: v
+        run: echo "version=${{ github.event.inputs.tag || github.ref_name }}" >> "$GITHUB_OUTPUT"
+
+      - run: go vet ./...
+
+      - name: Cross-compile
+        run: make dist VERSION=${{ steps.v.outputs.version }}
+
+      - name: Write release notes
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          {
+            echo '### Install (Linux/macOS, adjust os and arch)'
+            echo
+            echo '```sh'
+            echo "curl -fsSLO https://github.com/$REPO/releases/download/$VERSION/pit_${VERSION}_linux_amd64.tar.gz"
+            echo "tar -xzf pit_${VERSION}_linux_amd64.tar.gz"
+            echo "sudo install pit_${VERSION}_linux_amd64/pit /usr/local/bin/pit"
+            echo '```'
+            echo
+            echo 'Windows builds are shipped as `.zip`. Verify any download against `checksums.txt`.'
+          } > release-notes.md
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          set -euo pipefail
+          # Tags such as v1.2.3-rc.1 are published as prereleases.
+          prerelease=""
+          case "$VERSION" in *-*) prerelease="--prerelease" ;; esac
+          gh release create "$VERSION" \
+            --title "pit $VERSION" \
+            --notes-file release-notes.md \
+            --generate-notes \
+            $prerelease \
+            dist/*.tar.gz dist/*.zip dist/checksums.txt
